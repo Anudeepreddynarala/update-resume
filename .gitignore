@@ -1,0 +1,18 @@
+#Python
+pycache/
+*.pyc
+venv/
+*.egg-info/
+
+#Environment file - DO NOT COMMIT YOUR API KEY!
+.env
+
+#Output folder
+output-pdfs/
+
+#LaTeX temporary files
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk

@@ -1,0 +1,6 @@
+# This file lists the Python packages required for the Resume Optimizer project.
+# Install them using: pip install -r requirements.txt
+google-generativeai==0.7.0
+python-dotenv==1.0.1
+requests==2.32.3
+mcp[cli]
