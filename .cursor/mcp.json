@@ -6,7 +6,7 @@
         "/Users/anudeepnarala/Documents/update-resume/mcp_server.py"
       ],
       "env": {
-        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+        "GEMINI_API_KEY": "AIzaSyCmSQczHii3bQ7c3870493SyLwykMujPbc"
       }
     }
   }

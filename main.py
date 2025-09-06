@@ -20,7 +20,7 @@ def escape_latex_chars(text: str) -> str:
     Escapes special LaTeX characters in a string.
     """
     latex_special_chars = {
-        '\\': r'\\textbackslash{}', # Correctly escape a literal backslash for LaTeX
+        '\\': r'\\textbackslash{}', # Re-enabled: Ensures all backslashes are escaped for LaTeX
         '&': r'\&',
         '%': r'\%',
         '$': r'\$',
@@ -90,7 +90,7 @@ def extract_sections_from_resume(resume_content: str) -> dict:
         vprint("Debug: Could not find \\section{Summary}.")
 
     # Manual parsing for skills section
-    skills_section_start_marker = "\\section{Skills and Certifications}"
+    skills_section_start_marker = "\\section{Skills}"
     begin_onecolentry_marker = "\\begin{onecolentry}"
     end_onecolentry_marker = "\\end{onecolentry}"
     
@@ -98,7 +98,7 @@ def extract_sections_from_resume(resume_content: str) -> dict:
     current_search_idx = resume_content.find(skills_section_start_marker)
 
     if current_search_idx != -1:
-        vprint(f"Debug: Found \\section{{Skills and Certifications}} at index {current_search_idx}.")
+        vprint(f"Debug: Found \\section{{Skills}} at index {current_search_idx}.")
         # Move past the section marker
         current_search_idx += len(skills_section_start_marker)
 
@@ -129,10 +129,10 @@ def extract_sections_from_resume(resume_content: str) -> dict:
                 # This accounts for potential leading/trailing spaces around the actual skill list
                 skill_list_text_raw = onecolentry_block_content[title_end_idx:].strip()
                 
-                # The skill_list_text_raw might contain \n or \vspace. We need to stop at the first true newline or \vspace
+                # The skill_list_text_raw might contain \\n or \\vspace. We need to stop at the first true newline or \\vspace
                 # Let's find the index of the first significant LaTeX command or newline after the skills
                 # This is a bit tricky, but we can look for common delimiters
-                newline_idx = skill_list_text_raw.find("\n")
+                newline_idx = skill_list_text_raw.find("\\n")
                 vspace_idx = skill_list_text_raw.find("\\vspace")
 
                 effective_end_idx = len(skill_list_text_raw)
@@ -149,7 +149,7 @@ def extract_sections_from_resume(resume_content: str) -> dict:
             current_search_idx = end_entry_idx + len(end_onecolentry_marker)
 
     else:
-        vprint("Debug: Could not find \\section{Skills and Certifications}.")
+        vprint("Debug: Could not find \\section{Skills}.")
 
     # We'll pass the extracted skills as a JSON string to the AI to maintain structure
     skills_json_string = json.dumps(extracted_skills)
@@ -185,35 +185,40 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
+    allowed_len = len(current_summary)
+
     prompt_template = (
-        r"You are an expert career coach and LaTeX resume editor. Your task is to optimize a resume for a specific job description.\n\n" +
-        r"**Job Description:**\n" +
+        r"You are an expert career coach and LaTeX resume editor. Your task is to optimize a resume for a specific job description.\\n\\n" +
+        r"**Job Description:**\\n" +
         r"---" +
         r"%s" +
         r"---" +
-        r"**Current Resume Content:**\n" +
+        r"**Current Resume Content:**\\n" +
         r"---" +
-        r"Summary Section:\n" +
+        r"Summary Section:\\n" +
         r"%s" + # current_summary_for_prompt
-        r"Skill Categories Section:\n" +
+        r"Skill Categories Section:\\n" +
         r"%s" + # current_skills_json_string (will be implemented in next phase)
         r"---" +
-        r"**Instructions:**\n" +
-        r"1. Revise the provided 'Summary' section to align with the role's requirements. Provide only the **plain text content** for the new summary. It **must not be empty and must contain concise and impactful text**, and its character count must be close to the original summary's content character count witin 5 characters (excluding LaTeX commands, %s characters).\\n" +
-        r"2. Identify the top 10-15 most important hard skills, soft skills, and technologies mentioned in the job description.\\n" +
-        r"3. Analyze *each* existing skill category in the 'Skills and Certifications' section of the resume. For each category, create an optimized, comma-separated list of keywords. Integrate the most important skills from the job description while retaining the most relevant existing ones. Critically, remove any irrelevant skills to help ensure the resume fits on one page. Provide only the **plain text content** for the new skill lists.\\n" +
+        r"**Instructions:**\\n" +
+        r"1. Revise the provided 'Summary' section to align with the role's requirements. Provide only the **plain text content** for the new summary. It **must not be empty and must contain concise and impactful text**, and its character count must be close to the original summary's content character count witin 5 characters (excluding LaTeX commands, %s characters). **It is critically important that the summary contains NO LaTeX commands or special characters; it should be pure plain text as it will be fully escaped before insertion.** Keep the summary to **two lines maximum** on a standard 10pt resume; as a hard cap keep it at or under **%s characters**. Focus the summary primarily on non-skill aspects from the job description (e.g., responsibilities, business impact, domain, outcomes), and include at most 1–2 high-priority skills from the job description. **Do not fabricate credentials, degrees, dates, or roles.** If the job title or description explicitly references a Product Owner role, mention the candidate is \"CSPO-certified\"; otherwise omit certification mentions.\\n" +
+        r"2. Identify the top 10-15 most important hard skills, soft skills, and technologies mentioned in the job description.\\\\n" +
+        r"3. Analyze *each* existing skill category in the 'Skills' section of the resume. For each category, create an optimized, comma-separated list of keywords. Integrate the most important skills from the job description while retaining the most relevant existing ones. Critically, remove any irrelevant skills to help ensure the resume fits on one page. Provide only the **plain text content** for the new skill lists. **Ensure each skill list is a non-empty, comma-separated string, and not null.**\\n" +
+        r"   IMPORTANT: Collapse the skills into EXACTLY THREE categories and output ONLY these keys in 'updated_skill_categories': 'Management skills', 'Technical skills', and 'Tools'.\\n" +
+        r"   - 'Management skills': product process, product/portfolio strategy, discovery, roadmapping, prioritization (RICE/MoSCoW), GTM, OKRs/KPIs, stakeholder mgmt, customer/market/domain terms (e.g., customer journey mapping, JTBD), communication/leadership.\\n" +
+        r"   - 'Technical skills': AI/ML (LLMs, RAG), data/analytics/BI/experimentation (SQL, Tableau, Looker), programming/scripting, cloud/services, architecture concepts.\\n" +
+        r"   - 'Tools': specific software/platforms (JIRA, Confluence, Figma, Postman, AWS, etc.).\\n" +
+        r"   If a skill could fit multiple categories, choose the most natural fit; if still uncertain, default to 'Management skills'.\\n" +
         r"4. From the Job Description, extract the **Company Name** and **Job Title**. If you cannot find them explicitly, infer them from the context or use a placeholder like \"Unknown_Company\" or \"Unknown_Job\".\\n" +
         r"5. Your output **MUST** be a valid JSON object. Do not include any other text, explanations, or formatting like markdown backticks.\\n\\n" +
         r"**JSON Output Format:**\\n" +
-        r"{{\\n" +
+        r"{\\n" +
         r"  \"updated_summary\": \"A highly skilled and driven professional with expertise in product management, poised to drive innovation at Hewlett Packard Enterprise.\",\\n" +
-        r"  \"updated_skill_categories\": {{\n" +
-        r"    \"AI/ML\": \"MCP Tools, LangChain, Pinecone, GPT APIs, RAG, Prompt Engineering, Vector DBs, AI Pipelines, Machine Learning, Deep Learning\",\\n" +
-        r"    \"Product/Strategy\": \"Agile, Market Sizing (TAM/SAM/SOM), SWOT & RICE, Go-to-Market, OKRs/KPIs, Product Management, Strategic Planning\",\\n" +
-        r"    \"Data/Analytics\": \"SQL, Python, Tableau, JS, Looker, Mixpanel, ROI Modeling, Data Analysis, Research\",\\n" +
-        r"    \"Tools\": \"Cursor, n8n, Python, AWS, Miro, Asana, Figma, Postman, Excel, Word, PowerPoint, JIRA, Confluence\",\\n" +
-        r"    \"Certifications\": \"CSPO (#001680162)\"\n" +
-        r"  }},\\n" +
+        r"  \"updated_skill_categories\": {\n" +
+        r"    \"Management skills\": \"Roadmapping, Prioritization (RICE), Stakeholder Management, Customer Journey Mapping, OKRs/KPIs, GTM\",\\n" +
+        r"    \"Technical skills\": \"SQL, Python, Tableau, LLMs, RAG, AWS\",\\n" +
+        r"    \"Tools\": \"JIRA, Confluence, Figma, Postman, AWS, Excel\"\\n" +
+        r"  },\\n" +
         r"  \"company_name\": \"Hewlett Packard Enterprise\",\\n" +
         r"  \"job_title\": \"Product Manager\"\\n" +
         r"}"
@@ -227,36 +232,59 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
     prompt = prompt_template % (
         job_desc_text_for_prompt,
         current_summary_for_prompt,
-        current_skills_section_for_prompt, # This placeholder will be replaced with the actual JSON string
-        len(current_summary)
+        current_skills_section_for_prompt, # JSON string
+        allowed_len,
+        allowed_len
     )
 
-    try:
-        response = model.generate_content(prompt)
-        response_text = response.text.strip()
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if not json_match:
-            print("Error: AI did not return a valid JSON object.")
-            print(f"Received: {response_text}")
-            return None
+    attempts = 0
+    last_error_note = ""
+    while attempts < 3:
+        try:
+            response = model.generate_content(prompt)
+            response_text = response.text.strip()
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if not json_match:
+                attempts += 1
+                prompt += "\n\nRefinement: Return ONLY a valid JSON object per the specified schema."
+                continue
 
-        json_string_to_load = json_match.group(0)
-        optimizations = json.loads(json_string_to_load)
+            json_string_to_load = json_match.group(0)
+            optimizations = json.loads(json_string_to_load)
 
-        # More explicit validation for content (only for summary, company, job title, and skills)
-        if not optimizations or \
-           not isinstance(optimizations.get("updated_summary"), str) or not optimizations.get("updated_summary") or \
-           not isinstance(optimizations.get("company_name"), str) or not optimizations.get("company_name") or \
-           not isinstance(optimizations.get("job_title"), str) or not optimizations.get("job_title") or \
-           not isinstance(optimizations.get("updated_skill_categories"), dict) or not optimizations.get("updated_skill_categories"):
-            print("Error: AI response missing expected keys or returned empty content for Summary, Company Name, Job Title, or Updated Skill Categories.")
-            print(f"Received optimizations: {optimizations}") # Print the full optimizations dict for more context
-            return None
+            # Validate content
+            if not optimizations or \
+               not isinstance(optimizations.get("updated_summary"), str) or not optimizations.get("updated_summary") or \
+               not isinstance(optimizations.get("company_name"), str) or not optimizations.get("company_name") or \
+               not isinstance(optimizations.get("job_title"), str) or not optimizations.get("job_title") or \
+               not isinstance(optimizations.get("updated_skill_categories"), dict) or not optimizations.get("updated_skill_categories"):
+                attempts += 1
+                prompt += "\n\nRefinement: The JSON was missing required keys or had empty values. Return all required fields with non-empty content."
+                continue
 
+            # Enforce hard summary cap
+            new_summary = optimizations.get("updated_summary", "")
+            if len(new_summary) > allowed_len + 5:
+                attempts += 1
+                over_by = len(new_summary) - (allowed_len + 5)
+                prompt += f"\n\nRefinement: The previous summary exceeded the cap by {over_by} characters. Regenerate the summary under or equal to {allowed_len} characters total, maximum two lines, focusing on non-skill aspects and at most 1–2 skills."
+                continue
+
+            return optimizations
+        except Exception as e:
+            attempts += 1
+            last_error_note = f"An error occurred during Gemini API call: {e.__class__.__name__}: {e}"
+            prompt += "\n\nRefinement: Return ONLY a valid JSON object per the specified schema."
+            continue
+
+    # Fallback: return None so caller can decide, or truncate the summary safely
+    print("Warning: Could not obtain compliant AI output after retries.")
+    if 'optimizations' in locals():
+        # Clip summary if necessary
+        clipped = optimizations.get("updated_summary", "")[:allowed_len]
+        optimizations["updated_summary"] = clipped
         return optimizations
-    except Exception as e:
-        print(f"An error occurred during Gemini API call: {e.__class__.__name__}: {e}")
-        return None
+    return None
 
 def update_latex_resume(original_content: str, optimizations: dict, company_name: str, job_title: str, output_dir: str) -> str:
     updated_content = original_content
@@ -264,6 +292,12 @@ def update_latex_resume(original_content: str, optimizations: dict, company_name
     # Update Summary (existing logic, no changes needed here for skills)
     new_plain_summary = optimizations.get("updated_summary")
     if new_plain_summary:
+        # Aggressively clean LaTeX bolding and other commands from the plain summary
+        # This regex removes \command{...} and \command patterns.
+        new_plain_summary = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', new_plain_summary) # Removes \command{arg}
+        new_plain_summary = re.sub(r'\\[a-zA-Z]+', '', new_plain_summary) # Removes \command
+        new_plain_summary = re.sub(r'\s+', ' ', new_plain_summary).strip() # Normalize whitespace
+
         # Reconstruct the LaTeX summary block from plain text
         reconstructed_summary_block_content = escape_latex_chars(new_plain_summary)
 
@@ -310,6 +344,16 @@ def update_latex_resume(original_content: str, optimizations: dict, company_name
                                         abs_content_start_idx = content_start_abs_idx + 1
                                         abs_content_end_idx = content_end_abs_idx
 
+                                        # Ensure the reconstructed_summary_block_content is wrapped in exactly one pair of braces
+                                        # Extract the content from the reconstructed_summary_block_content if it already has braces
+                                        temp_content_match = re.search(r'^\s*\{(.*)\}\s*$', reconstructed_summary_block_content, re.DOTALL)
+                                        if temp_content_match:
+                                            clean_content = temp_content_match.group(1).strip()
+                                        else:
+                                            clean_content = reconstructed_summary_block_content.strip()
+                                        
+                                        reconstructed_summary_block_content = f"{{{clean_content}}}"
+
                                         vprint(f"  summary_section_start_idx: {summary_section_start_idx}")
                                         vprint(f"  begin_entry_idx: {begin_entry_idx}")
                                         vprint(f"  end_entry_idx: {end_entry_idx}")
@@ -320,10 +364,15 @@ def update_latex_resume(original_content: str, optimizations: dict, company_name
                                         vprint(f"  Part after replacement (first 200 chars): \n---{updated_content[abs_content_end_idx:][:200]}---\n")
 
                                         # Perform the replacement using string slicing
+                                        reconstructed_summary_full_block = (
+                                            f"\\begin{{onecolentry}}\n"
+                                            f"            {reconstructed_summary_block_content}\n"
+                                            f"        \\end{{onecolentry}}"
+                                        )
                                         updated_content = (
-                                            updated_content[:abs_content_start_idx] +
-                                            reconstructed_summary_block_content +
-                                            updated_content[abs_content_end_idx:]
+                                            updated_content[:begin_entry_idx] +
+                                            reconstructed_summary_full_block +
+                                            updated_content[end_entry_idx + len(end_onecolentry_marker):]
                                         )
                                         vprint("Summary content updated successfully.")
                                     else:
@@ -348,109 +397,94 @@ def update_latex_resume(original_content: str, optimizations: dict, company_name
     vprint(f"\n--- DEBUG: Skills Section Update ---")
     vprint(f"AI Optimizations for Skills (raw): {optimizations.get('updated_skill_categories', 'Not Found')}")
     vprint(f"Parsed updated_skill_categories: {updated_skill_categories}")
-    final_skills_content_blocks = []
-
-    skills_section_start_marker = "\\section{Skills and Certifications}"
+    # Rebuild the entire Skills section using the new three categories
+    skills_section_start_marker = "\\section{Skills}"
     begin_onecolentry_marker = "\\begin{onecolentry}"
     end_onecolentry_marker = "\\end{onecolentry}"
-    category_title_pattern = re.compile(r"\\textbf{([^:]+):}", re.DOTALL)
+
+    # Normalize keys to lower for matching
+    normalized_updated = { (k or "").strip().lower(): (v or "") for k, v in updated_skill_categories.items() }
+    desired_order = [
+        ("Management skills", "management skills"),
+        ("Technical skills", "technical skills"),
+        ("Tools", "tools"),
+    ]
+
+    def normalize_and_limit(category_display_name: str, skills_csv: str) -> str:
+        items_raw = [s.strip() for s in (skills_csv or "").split(',') if s.strip()]
+        seen = set()
+        items = []
+        for itm in items_raw:
+            key = itm.lower()
+            if key not in seen:
+                seen.add(key)
+                items.append(itm)
+        max_items_map = {
+            'Management skills': 12,
+            'Technical skills': 12,
+            'Tools': 14,
+        }
+        max_items = max_items_map.get(category_display_name, 12)
+        return ", ".join(items[:max_items])
+
+    rebuilt_blocks = []
+    for display_name, norm_key in desired_order:
+        skills_csv = normalized_updated.get(norm_key, "").strip()
+        if not skills_csv:
+            continue
+        skills_csv = normalize_and_limit(display_name, skills_csv)
+        if not skills_csv:
+            continue
+        block = (
+            f"\\begin{{onecolentry}}\n"
+            f"            \\textbf{{{display_name}:}} {escape_latex_chars(skills_csv)}\n"
+            f"        \\end{{onecolentry}}"
+        )
+        rebuilt_blocks.append(block)
 
     skills_section_start_idx = updated_content.find(skills_section_start_marker)
-    skills_section_end_idx = -1
-
-    if skills_section_start_idx != -1:
-        vprint(f"Found \\section{{Skills and Certifications}} for update at index {skills_section_start_idx}.")
-        # Find the end of the entire skills section (before the next \\section or \\end{document)
+    if skills_section_start_idx != -1 and rebuilt_blocks:
+        # Find section end
         next_section_idx = updated_content.find("\\section{", skills_section_start_idx + len(skills_section_start_marker))
         end_document_idx = updated_content.find("\\end{document}", skills_section_start_idx + len(skills_section_start_marker))
-
         if next_section_idx != -1 and (end_document_idx == -1 or next_section_idx < end_document_idx):
             skills_section_end_idx = next_section_idx
         elif end_document_idx != -1:
             skills_section_end_idx = end_document_idx
-        
-        if skills_section_end_idx == -1:
+        else:
             skills_section_end_idx = len(updated_content)
 
-        skills_search_area_for_update = updated_content[skills_section_start_idx : skills_section_end_idx]
-        current_block_search_idx = 0
-
-        while True:
-            begin_entry_idx_relative = skills_search_area_for_update.find(begin_onecolentry_marker, current_block_search_idx)
-            if begin_entry_idx_relative == -1:
-                break
-            
-            end_entry_idx_relative = skills_search_area_for_update.find(end_onecolentry_marker, begin_entry_idx_relative)
-            if end_entry_idx_relative == -1:
-                print("Warning: Found \\begin{onecolentry} without matching \\end{onecolentry} in skills section during update.")
-                break
-            
-            onecolentry_block_full = skills_search_area_for_update[begin_entry_idx_relative : end_entry_idx_relative + len(end_onecolentry_marker)]
-            vprint(f"  Processing block (first 100 chars): ---{onecolentry_block_full[:100]}---")
-
-            # Extract category title from this block
-            category_match = category_title_pattern.search(onecolentry_block_full)
-            if category_match:
-                category_title = category_match.group(1).strip()
-                vprint(f"    Extracted category title: '{category_title}'")
-                if category_title in updated_skill_categories:
-                    new_skill_list = updated_skill_categories[category_title]
-                    vprint(f"    Category '{category_title}' found in AI optimizations. New list: {new_skill_list[:100]}...")
-                    # Reconstruct the block with the new skill list
-                    reconstructed_skill_block_content = (
-                        f"\\textbf{{{category_title}:}} {escape_latex_chars(new_skill_list)}"
-                    )
-                    # Find the start and end of the original skill list within the block
-                    # We need to replace from after \textbf{Category:} to before \end{onecolentry}
-                    # The entire block content from \begin{onecolentry} to \end{onecolentry} including inner content
-                    
-                    # Reconstruct the full block structure
-                    reconstructed_full_block = (
-                        f"\\begin{{onecolentry}}\n"  # Preserve original leading newline/indentation if any
-                        f"            {reconstructed_skill_block_content}\n" # Preserve original indentation
-                        f"        \\end{{onecolentry}}"
-                    )
-
-                    final_skills_content_blocks.append(reconstructed_full_block)
-                    vprint(f"Debug: Updated skill category: {category_title}")
-                else:
-                    vprint(f"Debug: Removing skill category (not in AI optimizations): {category_title}")
-            else:
-                vprint(f"Warning: Could not find category title in block: {onecolentry_block_full[:100]}...")
-            
-            current_block_search_idx = end_entry_idx_relative + len(end_onecolentry_marker)
-        
-        # Reconstruct the entire Skills and Certifications section
-        if final_skills_content_blocks:
-            new_skills_section_content = "\n\n".join(final_skills_content_blocks)
-            vprint(f"  New Skills Section Content (first 200 chars): \n---{new_skills_section_content[:200]}---\n")
-
-            # Preserve the section heading and surrounding whitespace/newlines
-            # This part is complex due to varied whitespace. Let's try to be precise.
-            section_heading_start_line_idx = updated_content.find(skills_section_start_marker)
-            # Find the actual start of the first \begin{onecolentry} after the section heading
-            first_begin_entry_abs_idx = updated_content.find(begin_onecolentry_marker, section_heading_start_line_idx)
-
-            if first_begin_entry_abs_idx != -1:
-                pre_skills_section_content = updated_content[:section_heading_start_line_idx]
-                post_skills_section_content = updated_content[skills_section_end_idx:]
-                section_heading_and_pre_onecolentry_whitespace = updated_content[section_heading_start_line_idx : first_begin_entry_abs_idx]
-
-                updated_content = (
-                    pre_skills_section_content +
-                    section_heading_and_pre_onecolentry_whitespace +
-                    "\n\n" +
-                    new_skills_section_content +
-                    post_skills_section_content
-                )
-                vprint("Debug: Skills and Certifications section fully reconstructed.")
-            else:
-                print("Warning: Could not find first \\begin{onecolentry} in skills section for full reconstruction.")
-
+        # Locate where the first onecolentry begins (if any) after the heading
+        first_begin_entry_abs_idx = updated_content.find(begin_onecolentry_marker, skills_section_start_idx)
+        if first_begin_entry_abs_idx == -1 or first_begin_entry_abs_idx > skills_section_end_idx:
+            # No existing blocks; insert after the section header line
+            insertion_point = skills_section_start_idx + len(skills_section_start_marker)
+            # Include any whitespace/newlines right after header
+            header_to_end = updated_content[skills_section_start_idx:skills_section_end_idx]
+            header_trailing_idx = header_to_end.find('\n')
+            if header_trailing_idx != -1:
+                insertion_point = skills_section_start_idx + header_trailing_idx + 1
+            new_skills_section_content = "\n\n".join(rebuilt_blocks)
+            updated_content = (
+                updated_content[:insertion_point] +
+                "\n\n" + new_skills_section_content + "\n" +
+                updated_content[skills_section_end_idx:]
+            )
         else:
-            vprint("Debug: No skill categories to reconstruct. Skills section might be empty (or all removed).")
+            pre_skills_section_content = updated_content[:skills_section_start_idx]
+            post_skills_section_content = updated_content[skills_section_end_idx:]
+            section_heading_and_pre_onecolentry_whitespace = updated_content[skills_section_start_idx : first_begin_entry_abs_idx]
+            new_skills_section_content = "\n\n".join(rebuilt_blocks)
+            updated_content = (
+                pre_skills_section_content +
+                section_heading_and_pre_onecolentry_whitespace +
+                "\n\n" +
+                new_skills_section_content +
+                post_skills_section_content
+            )
+        vprint("Debug: Skills section rebuilt to three categories.")
     else:
-        print("Warning: Skills and Certifications section not found for update.")
+        vprint("Debug: Skills section not rebuilt (either not found or no categories provided).")
     vprint("-------------------------------------")
 
     # Save the new .tex file
@@ -475,6 +509,7 @@ def compile_latex_to_pdf(tex_file_path: str):
 
     command = [
         'pdflatex',
+        '-interaction=nonstopmode', # Added to prevent interactive hangs on error
         '-output-directory', output_directory,
         tex_file_path
     ]
@@ -567,4 +602,3 @@ def optimize_resume(job_url: str, resume_file_name: str):
 
 if __name__ == "__main__":
     main()
-
