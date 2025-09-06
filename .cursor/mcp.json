@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "resume-optimizer-mcp": {
+      "command": "/Users/anudeepnarala/Documents/update-resume/venv/bin/python",
+      "args": [
+        "/Users/anudeepnarala/Documents/update-resume/mcp_server.py"
+      ],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
+    }
+  }
+}
+
+

@@ -42,7 +42,43 @@ Restart Claude; you’ll see server `resume-optimizer-mcp` with tool `optimize_r
 
 - Cursor
 
-`cursor.json` already includes an MCP entry. Restart Cursor to load it. Call tool `optimize_resume` with:
+Project-level config: add `.cursor/mcp.json` (Cursor reads this file, not `cursor.json`).
+
+Option A: Direct Python (uses your venv’s Python)
+
+```json
+{
+  "mcpServers": {
+    "resume-optimizer-mcp": {
+      "command": "/Users/you/path/update-resume/venv/bin/python",
+      "args": [
+        "/Users/you/path/update-resume/mcp_server.py"
+      ],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Option B: uv + mcp runner
+
+```json
+{
+  "mcpServers": {
+    "resume-optimizer-mcp": {
+      "command": "uv",
+      "args": ["run","--with","mcp[cli]","mcp","run","/Users/you/path/update-resume/mcp_server.py"],
+      "env": {"GEMINI_API_KEY": "${GEMINI_API_KEY}"}
+    }
+  }
+}
+```
+
+Then fully restart Cursor (quit and reopen). Tool appears under Integrations → MCP.
+
+Call tool `optimize_resume` with:
 
 ```json
 {
