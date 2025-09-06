@@ -48,9 +48,20 @@ def get_content_from_url(url: str) -> str:
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching URL content with Jina AI Reader: {e.__class__.__name__}: {e}")
+        print(f"Error fetching URL content with Jina AI Reader: {e.__class__.__name__}: {e}\n")
         print("This might be due to a network issue, invalid URL, or server-side problems.")
-        return None
+        # Fallback: try fetching the original URL directly
+        try:
+            print("Attempting direct fetch of the original URL as a fallback...")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
+            }
+            response2 = requests.get(url, headers=headers, timeout=30)
+            response2.raise_for_status()
+            return response2.text
+        except requests.exceptions.RequestException as e2:
+            print(f"Direct fetch failed: {e2.__class__.__name__}: {e2}")
+            return None
     except Exception as e:
         print(f"An unexpected error occurred while fetching URL content with Jina AI Reader: {e.__class__.__name__}: {e}")
         print("This could be a parsing error or another unforeseen problem.")
@@ -183,9 +194,16 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
         print("Error: GEMINI_API_KEY not found. Please create a .env file with your API key.")
         return None
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-pro-latest")
+    model = genai.GenerativeModel(model_name)
 
-    allowed_len = len(current_summary)
+    # Set summary cap to match the provided perfect summary length (normalized to a single line)
+    target_summary_reference = (
+        "Experienced product leader focused on driving innovation and growth through strategic product development and\n"
+        "execution. Proven ability to manage the entire product lifecycle from ideation to launch, delivering tangible"
+    )
+    target_summary_reference = " ".join(target_summary_reference.split())  # collapse whitespace/newlines
+    allowed_len = len(target_summary_reference)
 
     prompt_template = (
         r"You are an expert career coach and LaTeX resume editor. Your task is to optimize a resume for a specific job description.\\n\\n" +
@@ -201,7 +219,7 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
         r"%s" + # current_skills_json_string (will be implemented in next phase)
         r"---" +
         r"**Instructions:**\\n" +
-        r"1. Revise the provided 'Summary' section to align with the role's requirements. Provide only the **plain text content** for the new summary. It **must not be empty and must contain concise and impactful text**, and its character count must be close to the original summary's content character count witin 5 characters (excluding LaTeX commands, %s characters). **It is critically important that the summary contains NO LaTeX commands or special characters; it should be pure plain text as it will be fully escaped before insertion.** Keep the summary to **two lines maximum** on a standard 10pt resume; as a hard cap keep it at or under **%s characters**. Focus the summary primarily on non-skill aspects from the job description (e.g., responsibilities, business impact, domain, outcomes), and include at most 1–2 high-priority skills from the job description. **Do not fabricate credentials, degrees, dates, or roles.** If the job title or description explicitly references a Product Owner role, mention the candidate is \"CSPO-certified\"; otherwise omit certification mentions.\\n" +
+        r"1. Revise the provided 'Summary' section to align with the role's requirements. Provide only the **plain text content** for the new summary. It **must not be empty and must contain concise and impactful text**. The summary **must not exceed %s characters** (the fixed cap) and should be **as close as possible** to that length without going over (being a few characters shorter is okay). **It is critically important that the summary contains NO LaTeX commands or special characters; it will be fully escaped before insertion.** Focus primarily on non-skill aspects from the job description (responsibilities, business impact, domain, outcomes), and include at most 1–2 high-priority skills. **Do not fabricate credentials, degrees, dates, or roles.** If the job title or description explicitly references a Product Owner role, mention the candidate is \"CSPO-certified\"; otherwise omit certification mentions.\\n" +
         r"2. Identify the top 10-15 most important hard skills, soft skills, and technologies mentioned in the job description.\\\\n" +
         r"3. Analyze *each* existing skill category in the 'Skills' section of the resume. For each category, create an optimized, comma-separated list of keywords. Integrate the most important skills from the job description while retaining the most relevant existing ones. Critically, remove any irrelevant skills to help ensure the resume fits on one page. Provide only the **plain text content** for the new skill lists. **Ensure each skill list is a non-empty, comma-separated string, and not null.**\\n" +
         r"   IMPORTANT: Collapse the skills into EXACTLY THREE categories and output ONLY these keys in 'updated_skill_categories': 'Management skills', 'Technical skills', and 'Tools'.\\n" +
@@ -214,7 +232,7 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
         r"**JSON Output Format:**\\n" +
         r"{\\n" +
         r"  \"updated_summary\": \"A highly skilled and driven professional with expertise in product management, poised to drive innovation at Hewlett Packard Enterprise.\",\\n" +
-        r"  \"updated_skill_categories\": {\n" +
+        r"  \"updated_skill_categories\": {\\n" +
         r"    \"Management skills\": \"Roadmapping, Prioritization (RICE), Stakeholder Management, Customer Journey Mapping, OKRs/KPIs, GTM\",\\n" +
         r"    \"Technical skills\": \"SQL, Python, Tableau, LLMs, RAG, AWS\",\\n" +
         r"    \"Tools\": \"JIRA, Confluence, Figma, Postman, AWS, Excel\"\\n" +
@@ -233,13 +251,13 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
         job_desc_text_for_prompt,
         current_summary_for_prompt,
         current_skills_section_for_prompt, # JSON string
-        allowed_len,
         allowed_len
     )
 
     attempts = 0
     last_error_note = ""
-    while attempts < 3:
+    max_attempts = 8
+    while attempts < max_attempts:
         try:
             response = model.generate_content(prompt)
             response_text = response.text.strip()
@@ -252,22 +270,28 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
             json_string_to_load = json_match.group(0)
             optimizations = json.loads(json_string_to_load)
 
-            # Validate content
-            if not optimizations or \
-               not isinstance(optimizations.get("updated_summary"), str) or not optimizations.get("updated_summary") or \
-               not isinstance(optimizations.get("company_name"), str) or not optimizations.get("company_name") or \
-               not isinstance(optimizations.get("job_title"), str) or not optimizations.get("job_title") or \
-               not isinstance(optimizations.get("updated_skill_categories"), dict) or not optimizations.get("updated_skill_categories"):
-                attempts += 1
-                prompt += "\n\nRefinement: The JSON was missing required keys or had empty values. Return all required fields with non-empty content."
-                continue
+            # Coerce/validate content (lenient)
+            if not isinstance(optimizations, dict):
+                optimizations = {}
+            if not isinstance(optimizations.get("updated_summary"), str):
+                optimizations["updated_summary"] = ""
+            if not isinstance(optimizations.get("company_name"), str) or not optimizations.get("company_name"):
+                optimizations["company_name"] = "Unknown_Company"
+            if not isinstance(optimizations.get("job_title"), str) or not optimizations.get("job_title"):
+                optimizations["job_title"] = "Unknown_Job"
+            if not isinstance(optimizations.get("updated_skill_categories"), dict):
+                optimizations["updated_skill_categories"] = {}
 
-            # Enforce hard summary cap
+            # Enforce: never exceed original length; be close but <= allowed_len
             new_summary = optimizations.get("updated_summary", "")
-            if len(new_summary) > allowed_len + 5:
+            if not new_summary:
                 attempts += 1
-                over_by = len(new_summary) - (allowed_len + 5)
-                prompt += f"\n\nRefinement: The previous summary exceeded the cap by {over_by} characters. Regenerate the summary under or equal to {allowed_len} characters total, maximum two lines, focusing on non-skill aspects and at most 1–2 skills."
+                prompt += f"\n\nRefinement: Provide a concise plain-text summary that does not exceed {allowed_len} characters and is as close as possible to that length."
+                continue
+            if len(new_summary) > allowed_len:
+                attempts += 1
+                over_by = len(new_summary) - allowed_len
+                prompt += f"\n\nRefinement: The summary exceeded the cap by {over_by}. Regenerate a summary that is <= {allowed_len} characters and close to that length."
                 continue
 
             return optimizations
@@ -280,7 +304,6 @@ def get_ai_optimizations(job_desc_text: str, current_summary: str, current_skill
     # Fallback: return None so caller can decide, or truncate the summary safely
     print("Warning: Could not obtain compliant AI output after retries.")
     if 'optimizations' in locals():
-        # Clip summary if necessary
         clipped = optimizations.get("updated_summary", "")[:allowed_len]
         optimizations["updated_summary"] = clipped
         return optimizations
